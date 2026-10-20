@@ -12,7 +12,7 @@ navegador, sin instalar ninguna app, con [MindAR](https://hiukim.github.io/mind-
 
 ## 1. Pruébalo en el móvil
 
-1. Abre **https://CUENTA.github.io/taller-ar/** y permite la cámara.
+1. Abre **https://factoriaf5code.github.io/image-tracking/** y permite la cámara.
 2. Apunta a un póster.
 3. Toca la pantalla: el personaje salta y cambia de animación.
 
