@@ -2,49 +2,108 @@ import { loadGLTF } from "./libs/loader.js";
 
 const THREE = window.MINDAR.IMAGE.THREE;
 
-// =====================================================================
-//   👇  LO ÚNICO QUE HAY QUE TOCAR EN EL TALLER  👇
-// =====================================================================
-// Póster 1 (marcador.png, el robot naranja) → MODELO
-// Póster 2 (marcador-2.png, el zorro)       → MODELO_2
-const MODELO      = './assets/robot.glb'; // ← cambia esto por tu modelo de poly.pizza (.glb)
-const ANIMACION   = 'Dance';              // animación con la que empieza (si trae varias)
-const MODELO_2    = './assets/zorro.glb';
+// --- Config del taller: cambia aquí tu modelo ---------------------------
+// Para poner otro modelo de poly.pizza: guarda el .glb en assets/ y cambia la ruta.
+const MODELO      = './assets/robot.glb';   // póster del robot
+const ANIMACION   = 'Dance';                // animación inicial (los nombres salen en la consola)
+const MODELO_2    = './assets/zorro.glb';   // póster del zorro
 const ANIMACION_2 = 'Walk';
-const TAMANO    = 1;       // 1 = igual de ancho que el marcador. Prueba 0.5 o 1.5
-const GIRA      = true;    // ¿gira despacio sobre sí mismo?
-const FLOTA     = true;    // ¿sube y baja como si flotase?
-// Abre la consola (F12) para ver los nombres de las animaciones de cada modelo.
-// =====================================================================
+const TAMANO = 1;      // 1 = tan ancho como el póster
+const GIRA   = true;   // gira despacio
+const FLOTA  = true;   // sube y baja
+// -----------------------------------------------------------------------
 
 document.addEventListener('DOMContentLoaded', () => {
   const start = async () => {
 
+    // MindAR: le pasamos targets.mind, que tiene los dos pósters (0 = robot, 1 = zorro)
     const mindarThree = new window.MINDAR.IMAGE.MindARThree({
       container: document.body,
-      imageTargetSrc: './assets/targets.mind', // contiene los 2 pósters: nº 0 y nº 1
+      imageTargetSrc: './assets/targets.mind',
     });
     const { renderer, scene, camera } = mindarThree;
 
     const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
     scene.add(light);
 
-    // Un personaje por póster (igual que el repo multi-imagen de Ana: addAnchor(0), addAnchor(1)...)
-    const personajes = [
-      await crearPersonaje(mindarThree, 0, MODELO, ANIMACION),
-      await crearPersonaje(mindarThree, 1, MODELO_2, ANIMACION_2),
-    ];
+    // Cargamos los modelos. ajustarAlMarcador (abajo) los centra y escala al póster,
+    // así no hay que andar probando scale y position para cada modelo.
+    const robot = await loadGLTF(MODELO);
+    ajustarAlMarcador(robot.scene, TAMANO);
+    const robotAltura = robot.scene.position.y;
 
-    // INTERACCIÓN: al tocar la pantalla, el personaje salta y cambia de animación
-    document.body.addEventListener('pointerdown', () => personajes.forEach(p => p.truco()));
+    const zorro = await loadGLTF(MODELO_2);
+    ajustarAlMarcador(zorro.scene, TAMANO);
+    const zorroAltura = zorro.scene.position.y;
 
-    // Arrancamos la cámara y el bucle de dibujo (se ejecuta ~60 veces por segundo)
+    // Un ancla por póster. Lo que metemos en el ancla se mueve con el póster.
+    const anchor = mindarThree.addAnchor(0);
+    anchor.group.add(robot.scene);
+
+    const zorroAnchor = mindarThree.addAnchor(1);
+    zorroAnchor.group.add(zorro.scene);
+
+    // Animaciones: vienen dentro del .glb, solo hay que reproducirlas
+    console.log('Animaciones del robot:', robot.animations.map(a => a.name));
+    console.log('Animaciones del zorro:', zorro.animations.map(a => a.name));
+
+    const robotMixer = new THREE.AnimationMixer(robot.scene);
+    let robotClip = Math.max(0, robot.animations.findIndex(a => a.name === ANIMACION));
+    let robotAccion = robotMixer.clipAction(robot.animations[robotClip]).play();
+
+    const zorroMixer = new THREE.AnimationMixer(zorro.scene);
+    let zorroClip = Math.max(0, zorro.animations.findIndex(a => a.name === ANIMACION_2));
+    let zorroAccion = zorroMixer.clipAction(zorro.animations[zorroClip]).play();
+
+    // Al tocar la pantalla: salto + siguiente animación de la lista
+    let salto = 0;   // segundos que quedan de salto
+    document.body.addEventListener('pointerdown', () => {
+      salto = 0.6;
+
+      robotAccion.stop();
+      robotClip = (robotClip + 1) % robot.animations.length;
+      robotAccion = robotMixer.clipAction(robot.animations[robotClip]).play();
+      console.log('Robot:', robot.animations[robotClip].name);
+
+      zorroAccion.stop();
+      zorroClip = (zorroClip + 1) % zorro.animations.length;
+      zorroAccion = zorroMixer.clipAction(zorro.animations[zorroClip]).play();
+      console.log('Zorro:', zorro.animations[zorroClip].name);
+    });
+
+    // Cuando la cámara encuentra un póster, el personaje entra saltando
+    anchor.onTargetFound = () => { salto = 0.6; console.log('Póster 1 detectado'); };
+    zorroAnchor.onTargetFound = () => { salto = 0.6; console.log('Póster 2 detectado'); };
+
+    // Bucle de dibujo, ~60 veces por segundo
     const clock = new THREE.Clock();
     await mindarThree.start();
     renderer.setAnimationLoop(() => {
-      const delta = clock.getDelta();   // segundos desde el último frame
-      const t = clock.elapsedTime;      // segundos desde el inicio
-      personajes.forEach(p => p.actualizar(delta, t));
+      const delta = clock.getDelta();   // segundos desde el frame anterior
+      const t = clock.elapsedTime;
+
+      if (salto > 0) {
+        // salto: altura en forma de arco y una vuelta entera mientras dura
+        salto -= delta;
+        const progreso = 1 - Math.max(salto, 0) / 0.6;
+        const altura = Math.sin(progreso * Math.PI) * 0.35;
+        robot.scene.position.y = robotAltura + altura;
+        zorro.scene.position.y = zorroAltura + altura;
+        robot.scene.rotation.y += delta * (Math.PI * 2 / 0.6);
+        zorro.scene.rotation.y += delta * (Math.PI * 2 / 0.6);
+      } else {
+        if (GIRA) {
+          robot.scene.rotation.y += delta * 0.8;
+          zorro.scene.rotation.y += delta * 0.8;
+        }
+        if (FLOTA) {
+          robot.scene.position.y = robotAltura + Math.sin(t * 2) * 0.04;
+          zorro.scene.position.y = zorroAltura + Math.sin(t * 2) * 0.04;
+        }
+      }
+
+      robotMixer.update(delta);
+      zorroMixer.update(delta);
       renderer.render(scene, camera);
     });
   }
@@ -55,62 +114,8 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
-// Carga un modelo, lo pega al marcador nº `indice` y devuelve sus funciones de animación
-async function crearPersonaje(mindarThree, indice, ruta, animacionInicial) {
-
-  // 1) Cargamos el modelo y lo centramos/escalamos sobre el marcador
-  const gltf = await loadGLTF(ruta);
-  const modelo = gltf.scene;
-  ajustarAlMarcador(modelo, TAMANO);
-  const alturaBase = modelo.position.y;
-
-  // 2) Lo colgamos del marcador
-  const anchor = mindarThree.addAnchor(indice);
-  anchor.group.add(modelo);
-
-  // 3) Si el modelo trae animaciones propias (robots, animales...), las usamos
-  const clips = gltf.animations;
-  let mixer = null, accion = null, actual = 0;
-  const reproducir = (i) => {
-    actual = i;
-    if (accion) accion.fadeOut(0.2);
-    accion = mixer.clipAction(clips[actual]).reset().fadeIn(0.2).play();
-    console.log(`Póster ${indice + 1} · animación:`, clips[actual].name);
-  };
-  if (clips.length > 0) {
-    console.log(`Póster ${indice + 1} · animaciones de ${ruta}:`, clips.map(c => c.name));
-    mixer = new THREE.AnimationMixer(modelo);
-    reproducir(Math.max(0, clips.findIndex(c => c.name === animacionInicial)));
-  }
-
-  // 4) Salto: al tocar la pantalla, o cuando el póster reaparece (tápalo y destápalo)
-  let salto = 0; // segundos que quedan de salto (0 = en el suelo)
-  anchor.onTargetFound = () => { salto = 0.6; console.log(`Póster ${indice + 1} detectado`); };
-  const truco = () => {
-    if (!anchor.group.visible) return;          // solo el personaje que se está viendo
-    salto = 0.6;
-    if (mixer) reproducir((actual + 1) % clips.length);
-  };
-
-  // 5) Lo que se mueve en cada frame
-  const actualizar = (delta, t) => {
-    if (salto > 0) {
-      salto -= delta;
-      const progreso = 1 - Math.max(salto, 0) / 0.6;                    // de 0 a 1
-      modelo.position.y = alturaBase + Math.sin(progreso * Math.PI) * 0.35; // arco del salto
-      modelo.rotation.y += delta * (Math.PI * 2 / 0.6);                 // una vuelta completa
-    } else {
-      if (GIRA)  modelo.rotation.y += delta * 0.8;                      // una vuelta cada ~8 s
-      if (FLOTA) modelo.position.y = alturaBase + Math.sin(t * 2) * 0.04;
-    }
-    if (mixer) mixer.update(delta);
-  };
-
-  return { truco, actualizar };
-}
-
-// Escala el modelo para que su lado mayor mida `tamano` (el marcador mide 1 de ancho)
-// y lo centra en el marcador. Así cualquier modelo de Poly Pizza se ve a la primera.
+// Escala el modelo para que su lado más largo mida `tamano` (el póster mide 1)
+// y lo centra en el origen del ancla.
 function ajustarAlMarcador(modelo, tamano) {
   const caja = new THREE.Box3().setFromObject(modelo);
   const medidas = caja.getSize(new THREE.Vector3());
@@ -119,5 +124,4 @@ function ajustarAlMarcador(modelo, tamano) {
 
   const centro = new THREE.Box3().setFromObject(modelo).getCenter(new THREE.Vector3());
   modelo.position.sub(centro);
-  console.log('Modelo ajustado. Medidas originales:', medidas.toArray(), '→ escala:', escala.toFixed(4));
 }
